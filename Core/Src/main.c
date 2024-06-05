@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <fatfs_sd.h>
+#include "bmp280.h"
 //#include <stc3100.h>
 //#include <stc31xx_I2cCustomReadWrite.h>
 /* USER CODE END Includes */
@@ -38,13 +39,12 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define CO2_address 0x29<<1
-#define CO2_BINARY 0x3615
-//#define CO2_ARG 0x36150001B0 //CO2 0-100% in air 
-#define CO2_ARG 0x36150003D2 //CO2 0-25% in air
 
 #define EEPROM_I2C_ADDRESS 0xA0
 
 #define STC3100_address 0x70<<1
+
+#define BME280_ADDRESS 0x76<<1
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -69,14 +69,21 @@ UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 char message_buffer[200] = {0};
-uint8_t Cmd_End[3] = {0xFF,0xFF,0xFF};  // command end sequence
+uint8_t Cmd_End[3] = {0xFF,0xFF,0xFF};  //Nextion komandu pabaiga
 char ID_1[4];
 char ID_2[9];
+uint8_t RX_Nextion;
+uint8_t Start=0;
+uint8_t SDStart=0;
 
-uint8_t NC[8]={};
+uint8_t SD_i[8]={};
 uint8_t Port = 1;
 uint8_t Data;
+char dir[20];
+char time[9];
+char date[10];
 
+//O2 UART
 double O2_perc;
 char O2_msg[5];
 char O2_data[41];
@@ -84,20 +91,12 @@ char O2_fixed[41];
 char ch = 'O';
 uint8_t index_O = 0;
 	
-uint8_t arg[5];
+//CO2 I2C
+uint8_t CRC_D[2]; 
 uint8_t CO2_Read[2];
 uint8_t rawCO2[2];
 short s16_CO2;
 double CO2_perc;
-
-uint8_t RX_Nextion;
-uint8_t Start=1;
-uint8_t SDStart=0;
-
-char dir[20];
-
-char time[9];
-char date[10];
 
 uint32_t adc_val = 0;
 float NTC_Varza = 0;
@@ -109,6 +108,8 @@ float A = 5.780e-4;
 float B = 2.951e-4;
 float C = 7.409e-8;
 
+//Baterijos monitoring
+uint8_t data;
 uint8_t rawBM[8];
 short s16_value;
 float batTemp;
@@ -136,6 +137,9 @@ void I2C_MUX_SET(uint8_t I2C_S);
 void EEPROM_READ(uint8_t *Data);
 void NTC_read();
 void BatteryMonitor();
+void TrimRead();
+int32_t BME280_compensate_T_int32(int32_t adc_T);
+uint32_t bme280_compensate_H_int32(int32_t adc_H);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -201,15 +205,23 @@ int main(void)
     Error_Handler();
   }
 	
+	RTC_Set_Date();
+	
+	//RTC_Set_Time();
+	//HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR1);
+	
 	if (HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR1) != 0x32F2)
 		RTC_Set_Time();
 	
-	if (HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR2) != 0xBEBE)
-		RTC_Set_Date();
+	//if (HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR2) != 0xBEBE
 	
 	HAL_GPIO_WritePin(I2C_A0_GPIO_Port, I2C_A0_Pin, GPIO_PIN_SET);
 	HAL_GPIO_WritePin(I2C_A1_GPIO_Port, I2C_A1_Pin, GPIO_PIN_SET);
 	HAL_GPIO_WritePin(I2C_A2_GPIO_Port, I2C_A2_Pin, GPIO_PIN_SET);
+	
+	//CO2 CRC byte isjungimas
+	CRC_D[0] = (uint8_t)(0x3768 >> 8);
+	CRC_D[1] = (uint8_t)(0x3768);
 	
   /* USER CODE END 2 */
 
@@ -365,9 +377,6 @@ static void MX_RTC_Init(void)
 
   /* USER CODE END RTC_Init 0 */
 
-  RTC_TimeTypeDef sTime = {0};
-  RTC_DateTypeDef DateToUpdate = {0};
-
   /* USER CODE BEGIN RTC_Init 1 */
 
   /* USER CODE END RTC_Init 1 */
@@ -386,25 +395,6 @@ static void MX_RTC_Init(void)
 	
   /* USER CODE END Check_RTC_BKUP */
 
-  /** Initialize RTC and set the Time and Date
-  */
-  sTime.Hours = 0x22;
-  sTime.Minutes = 0x13;
-  sTime.Seconds = 0x59;
-
-  if (HAL_RTC_SetTime(&hrtc, &sTime, RTC_FORMAT_BCD) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  DateToUpdate.WeekDay = RTC_WEEKDAY_SUNDAY;
-  DateToUpdate.Month = RTC_MONTH_MAY;
-  DateToUpdate.Date = 0x12;
-  DateToUpdate.Year = 0x0;
-
-  if (HAL_RTC_SetDate(&hrtc, &DateToUpdate, RTC_FORMAT_BCD) != HAL_OK)
-  {
-    Error_Handler();
-  }
   /* USER CODE BEGIN RTC_Init 2 */
 
   /* USER CODE END RTC_Init 2 */
@@ -641,26 +631,24 @@ void RTC_Set_Date()
 {
 	RTC_DateTypeDef DateToUpdate = {0};
 	
-	DateToUpdate.WeekDay = RTC_WEEKDAY_MONDAY;
-  DateToUpdate.Month = RTC_MONTH_MAY;
-  DateToUpdate.Date = 0x20;
+	DateToUpdate.WeekDay = RTC_WEEKDAY_WEDNESDAY;
+  DateToUpdate.Month = RTC_MONTH_JUNE;
+  DateToUpdate.Date = 0x05;
   DateToUpdate.Year = 0x24;
 
   if (HAL_RTC_SetDate(&hrtc, &DateToUpdate, RTC_FORMAT_BCD) != HAL_OK)
   {
     Error_Handler();
   }
-	
-	HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR2, 0xBEBE);
 }
 
 void RTC_Set_Time()
 {
 	RTC_TimeTypeDef sTime = {0};
   
-  sTime.Hours = 0x10;
-  sTime.Minutes = 0x05;
-  sTime.Seconds = 0x40;
+  sTime.Hours = 0x07;
+  sTime.Minutes = 0x45;
+  sTime.Seconds = 0x15;
 
   if (HAL_RTC_SetTime(&hrtc, &sTime, RTC_FORMAT_BCD) != HAL_OK)
   {
@@ -783,8 +771,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 						
 		// Failas uzdaromas
 		fresult = f_close(&fil);
-		
 	}
+	
 	else if(RX_Nextion==0x02){
 		__HAL_TIM_SET_PRESCALER(&htim7, 20000);  //10sek.
 		fresult = f_mount(&fs, "/", 1); // Ijungiamas SPI CS
@@ -819,11 +807,12 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 		fresult = f_lseek(&fil, fil.fsize);
 		
 		// Irasomi duomenys
-		f_puts("Irasymo periodas: 1sek.\n", &fil);
+		f_puts("Irasymo periodas: 10sek.\n", &fil);
 						
 		// Failas uzdaromas
 		fresult = f_close(&fil);
 	}
+	
 	else if(RX_Nextion==0x03){
 		__HAL_TIM_SET_PRESCALER(&htim7, 60600);  //30sek.
 		fresult = f_mount(&fs, "/", 1); // Ijungiamas SPI CS
@@ -858,11 +847,12 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 		fresult = f_lseek(&fil, fil.fsize);
 		
 		// Irasomi duomenys
-		f_puts("Irasymo periodas: 1sek.\n", &fil);
+		f_puts("Irasymo periodas: 30sek.\n", &fil);
 						
 		// Failas uzdaromas
 		fresult = f_close(&fil);
 	}
+	
 	else if(RX_Nextion==0x04){
 		__HAL_TIM_SET_PRESCALER(&htim7, 106000); //1min. 
 		fresult = f_mount(&fs, "/", 1); // Ijungiamas SPI CS
@@ -897,11 +887,12 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 		fresult = f_lseek(&fil, fil.fsize);
 		
 		// Irasomi duomenys
-		f_puts("Irasymo periodas: 1sek.\n", &fil);
+		f_puts("Irasymo periodas: 1min.\n", &fil);
 						
 		// Failas uzdaromas
 		fresult = f_close(&fil);
 	}
+	
 	else if(RX_Nextion==0x05){
 		__HAL_TIM_SET_PRESCALER(&htim7, 606000); //5min.
 		fresult = f_mount(&fs, "/", 1); // Ijungiamas SPI CS
@@ -936,7 +927,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 		fresult = f_lseek(&fil, fil.fsize);
 		
 		// Irasomi duomenys
-		f_puts("Irasymo periodas: 1sek.\n", &fil);
+		f_puts("Irasymo periodas: 5min.\n", &fil);
 						
 		// Failas uzdaromas
 		fresult = f_close(&fil);
@@ -955,14 +946,13 @@ void I2C_MUX_SET(uint8_t I2C_S){
 
 void NTC_READ()
 {
-	HAL_ADCEx_Calibration_Start(&hadc2);
 	HAL_ADC_Start(&hadc2);
 	HAL_ADC_PollForConversion(&hadc2, 30);
 	adc_val = HAL_ADC_GetValue(&hadc2);
 		
-	NTC_Volt = adc_val * (3.3/4095); // Itampos skaiciavimas
-	NTC_Varza = (NTC_Volt*10e3)/(3.3-NTC_Volt);
-	NTC_Temp = 1/(A+B*log(NTC_Varza)+C*pow(log(NTC_Varza),3))-273;
+	NTC_Volt = adc_val * (3.3/4095); // Itampos skaiciavimas (12bit)
+	NTC_Varza = (NTC_Volt*10e3)/(3.3-NTC_Volt); //Daliklio formule
+	NTC_Temp = 1/(A+B*log(NTC_Varza)+C*pow(log(NTC_Varza),3))-275;
 }
 
 
@@ -970,7 +960,7 @@ void EEPROM_READ(uint8_t *Data)
 {
 	if (HAL_I2C_Mem_Read(&hi2c1, EEPROM_I2C_ADDRESS, 0x00, 1, Data, 1, 2000)!=HAL_OK)
 			{
-				NC[Port] = 0;
+				SD_i[Port] = 0;
 			}
 }
 
@@ -984,10 +974,10 @@ void NEXTION_SendString (char *ID, char *string)
 
 void BatteryMonitor()
 {
-		uint8_t data = 0x02;
+		data = 0x03;
 		HAL_I2C_Mem_Write(&hi2c1, (STC3100_address), 0x01, I2C_MEMADD_SIZE_8BIT, &data, 1, 1000);
-			
-		data = 0x10;
+	
+		data = 0x18;
 		HAL_I2C_Mem_Write(&hi2c1, (STC3100_address), 0x00, I2C_MEMADD_SIZE_8BIT, &data, 1, 1000);
 			
 		HAL_I2C_Mem_Read(&hi2c1, (STC3100_address), 0x02, I2C_MEMADD_SIZE_8BIT, &rawBM[0], 1, 1000);
@@ -1020,7 +1010,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 		
 		if (Start == 1){
 			
-			//BatteryMonitor(); // Baterijos monitoringo funkcija
+			BatteryMonitor(); // Baterijos monitoringo funkcija
 			
 			//Pagrindinis ciklas
 			Data = 0x00;
@@ -1033,16 +1023,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 			EEPROM_READ(&Data);
 			sprintf(ID_1, "t%d", Port+8); //Nextion tekstu ID "t" sudarymas
 			sprintf(ID_2, "t%d", Port-1);
-				
-			//CO2 I2C
-			arg[0] = (uint8_t)(CO2_ARG >> 32);
-			arg[1] = (uint8_t)(CO2_ARG >> 24);
-			arg[2] = (uint8_t)(CO2_ARG >> 16);
-			arg[3] = (uint8_t)(CO2_ARG >> 8);
-			arg[4] = (uint8_t)(CO2_ARG);
 			
 			if (Data == 0x01){ //O2 jutiklio ID
-				NC[Port] = 1;
+				SD_i[Port] = 1;
 				MUX_SET(Port);
 				SWITCH_SET(1); //UART_RX
 				NEXTION_SendString(ID_2, "O2 %");
@@ -1055,9 +1038,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 				}
 				
 				for (uint8_t j = 0; j < 41; j++){
-						if ((j+index_O) > 40){
-							O2_fixed[j] = O2_data[Roll_i];
-							Roll_i++;
+						if ((j+index_O) > 40){ //Paketo ilgis virsija fiksuota dydi
+							O2_fixed[j] = O2_data[Roll_i]; //Simboliai pildomi nuo 0
+							Roll_i++; 
 						}
 						else
 							O2_fixed[j] = O2_data[j+index_O];
@@ -1066,17 +1049,18 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 				for (uint8_t i = 0; i < 5; i++)
 					O2_msg[i] = O2_fixed[i+27]; //O2 % issaugomi atskirame kintamajame
 						
-				sscanf(O2_msg, "%lf", &O2_perc);
-				O2_perc = O2_perc + 2;
+				sscanf(O2_msg, "%lf", &O2_perc); //Tekstas paverciamas float
+				O2_perc = O2_perc + 1;
 				
-				sprintf(message_buffer, "%0.2f", O2_perc);
-				NEXTION_SendString(ID_1, message_buffer);
-				
+				if (O2_perc>18 && O2_perc <21.8){
+					sprintf(message_buffer, "%0.2f", O2_perc);
+					NEXTION_SendString(ID_1, message_buffer);
+				}
 			}
 			
 			else if (Data == 0x02){ //Temperaturos jutiklio ID
 				NEXTION_SendString(ID_2, "Temp C");
-				NC[Port] = 2;
+				SD_i[Port] = 2;
 				MUX_SET(Port);
 				SWITCH_SET(2); //ADC_IN9
 				NTC_READ();
@@ -1084,39 +1068,33 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 				NEXTION_SendString(ID_1, message_buffer);
 			}
 			
+				else if (HAL_I2C_Master_Transmit(&hi2c1, CO2_address, CRC_D, 2, 1000) == HAL_OK){ //CRC isjungimas
 			
-			else if (HAL_I2C_Master_Transmit(&hi2c1, CO2_address, arg, 5, 1000) == HAL_OK){
-			
-				NC[Port] = 3;
+				SD_i[Port] = 3;
+				NEXTION_SendString(ID_2, "CO2 %");
 				
-				/*uint8_t ASC[2];
-				ASC[0] = (uint8_t)(0x3FEF >> 8);
-				ASC[1] = (uint8_t)(0x3FEF);
-				HAL_I2C_Master_Transmit(&hi2c1, CO2_address, ASC, 2, 3000);*/
+				uint8_t data[2]; 
+				data[0] = (0x001 >> 8);
+				data[1] = 0x001; //CO2 0-100% ore
+				HAL_I2C_Mem_Write(&hi2c1, CO2_address, 0x3615, I2C_MEMADD_SIZE_16BIT, data, 2, 1000);
 			
-				uint8_t Humidity[5];
-				Humidity[0] = (uint8_t)(0x36248000A2 >> 32);
-				Humidity[1] = (uint8_t)(0x36248000A2 >> 24);
-				Humidity[2] = (uint8_t)(0x36248000A2 >> 16);
-				Humidity[3] = (uint8_t)(0x36248000A2 >> 8);
-				Humidity[4] = (uint8_t)(0x36248000A2);
-				HAL_I2C_Master_Transmit(&hi2c1, CO2_address, Humidity, 5, 1000);
-			
+				data[0] = (uint8_t)(0x8000 >> 8);
+				data[1] = (uint8_t)(0x8000); // Atramine dregme 50%
+				HAL_I2C_Mem_Write(&hi2c1, CO2_address, 0x3624, I2C_MEMADD_SIZE_16BIT, data, 2, 1000);
 				
-				CO2_Read[0] = (uint8_t)(0x3639 >> 8);
+				CO2_Read[0] = (uint8_t)(0x3639 >> 8); //Nuskaitymo busena
 				CO2_Read[1] = (uint8_t)(0x3639);
 				HAL_I2C_Master_Transmit(&hi2c1, CO2_address, CO2_Read, 2, 1000);
 			
 				HAL_I2C_Master_Receive(&hi2c1, CO2_address, rawCO2, 2, 1000);
 			
 				s16_CO2 = (rawCO2[0] << 8) | rawCO2[1];
-				CO2_perc = (((s16_CO2 - 16384)/32768)*100);
+				CO2_perc = (((s16_CO2 - pow(2,14))/pow(2,15))*100); //Perskaiciuojama i %
 			
-				
-				NEXTION_SendString(ID_2, "CO2 %");
 				sprintf(message_buffer, "%0.2f", CO2_perc);
 				NEXTION_SendString(ID_1, message_buffer);
 			}
+			
 			
 			else {
 				NEXTION_SendString(ID_1, "Empty");
@@ -1125,7 +1103,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 			}
 			
 			Port++;
-			
 			
 		}
 	}
@@ -1145,7 +1122,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 	
 				for(uint8_t i=0; i<8; i++){
 				
-				if(NC[i] == 1){
+				if(SD_i[i] == 1){
 
 						fresult = f_mount(&fs, "/", 1);
 						sprintf(dir, "/O2.txt");
@@ -1156,7 +1133,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
 						// Writing text
 				
-						sprintf(message_buffer, "O2 konc. procentais: %s -- %2d-%02d-%02d %02d:%02d:%02d\n", O2_msg, 
+						sprintf(message_buffer, "O2 konc. procentais: %0.2f -- %2d-%02d-%02d %02d:%02d:%02d\n", O2_perc, 
 						2000 + gDate.Year, gDate.Month, gDate.Date, gTime.Hours, gTime.Minutes, gTime.Seconds);
 						f_puts(message_buffer, &fil);
 
@@ -1164,7 +1141,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 						fresult = f_close(&fil);
 					}
 				
-				if(NC[i] == 2){
+				if(SD_i[i] == 2){
 					
 						fresult = f_mount(&fs, "/", 1); // Ijungiamas SPI CS
 						sprintf(dir, "/Temp.txt"); // Sukuriama direktorija
@@ -1174,7 +1151,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 						fresult = f_lseek(&fil, fil.fsize);
 
 						// Irasomi duomenys
-						sprintf(message_buffer, "Temperatura: %0.1f C -- %2d-%02d-%02d %02d:%02d:%02d\n", NTC_Temp,
+						sprintf(message_buffer, "Temperatura: %0.2f C -- %2d-%02d-%02d %02d:%02d:%02d\n", NTC_Temp,
 						2000 + gDate.Year, gDate.Month, gDate.Date, gTime.Hours, gTime.Minutes, gTime.Seconds);
 						f_puts(message_buffer, &fil);
 						
@@ -1182,7 +1159,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 						fresult = f_close(&fil);
 					}
 				
-					if(NC[i] == 3){
+				if(SD_i[i] == 3){
 
 						fresult = f_mount(&fs, "/", 1);
 						sprintf(dir, "/CO2.txt");
