@@ -24,11 +24,17 @@ Starting from GUI, Nextion provides a great [tool](https://nextion.tech/editor_g
 
 Timer callback function is used for the main algorithm: it varies between I<sup>2</sup>C Multiplexer channels every 1 second and firstly tries to read out EEPROM data. Two _if_ statements exist for O<sub>2</sub> and thermistor sensor identification and upon reading a correct byte on one of the selected channels, the program proceeds with further processing. For example, reading out an EEPROM value of _0x01_ would indicate the O<sub>2</sub> sensor, then the same channel on Analog MUX would be selected, Analog Switch would open the path to UART_RX pin and the message processing function would be called. CO<sub>2</sub> on the other hand is basically identified by disabling sensor's CRC and checking, whether this I<sup>2</sup>C command gets a timeout or not. If disabling CRC was successful, further I<sup>2</sup>C command sequence is proceeded and in case **none** of these statements are met, channel prints out "Empty".
 
-This project had no need for high-speed microSD data writing, accordingly, SPI interface was implemented both from HW and SW side. To integrate this storage peripheral with a STM32 system, _FATFS_ Middleware was configured in STM32CubeMX and this [tutorial](https://controllerstech.com/sd-card-using-spi-in-stm32/) was followed specifically for SPI interface realization. A separate Timer was used for periodic file appending and its interrupt period differs by modifying the prescaler values in real-time. These modifications are done corresponding to input from the user: checkboxes 
+A separate Timer was used for periodic file appending and its interrupt period differs by modifying the timer prescaler values in real-time. These modifications are done corresponding to input from the user: checkboxes transmit different bytes, thus triggering an UART interrupt and by processing this data, a _HAL_TIM_SET_PRESCALER_ command is called respectively. For example, _0x01_ would set a 1sec. logging period, _0x02_ - 10sec. and so on. A separate menu in the GUI is shown below:
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/98dd9f8b-04b2-4e13-803e-33ade3583bb7" />
+  <img src="https://github.com/user-attachments/assets/e291db1b-19c6-4dd4-970d-caa87b29ba1f" />
 </p>
+
+This project had no need for high-speed microSD data writing, accordingly, SPI interface was implemented both from HW and SW side. To integrate this storage peripheral with a STM32 system, _FATFS_ Middleware was configured in STM32CubeMX and this [tutorial](https://controllerstech.com/sd-card-using-spi-in-stm32/) was followed specifically for SPI interface realization. The library provided gives the ability to operate in append mode, this way _.txt_ files can be created on an empty microSD card only once and will be appended each time logging is present. In order to prevent blank data logging into files or a mismatch, a flag _SD_i[Port]_ was implemented in the main algorithm, in case of a detected sensor it is set to a certain value:
+* 1 - O<sub>2</sub>;
+* 2 - Temp;
+* 3 - CO<sub>2</sub>.
+
 
 ![image](https://github.com/user-attachments/assets/7c7547f9-2da8-4a97-ab0e-dae25e2dd4ec)
 
