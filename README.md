@@ -30,11 +30,12 @@ A separate Timer was used for periodic file appending and its interrupt period d
   <img src="https://github.com/user-attachments/assets/e291db1b-19c6-4dd4-970d-caa87b29ba1f" />
 </p>
 
-This project had no need for high-speed microSD data writing, accordingly, SPI interface was implemented both from HW and SW side. To integrate this storage peripheral with a STM32 system, _FATFS_ Middleware was configured in STM32CubeMX and this [tutorial](https://controllerstech.com/sd-card-using-spi-in-stm32/) was followed specifically for SPI interface realization. The library provided gives the ability to operate in append mode, this way _.txt_ files can be created on an empty microSD card only once and will be appended each time logging is present. In order to prevent blank data logging into files or a mismatch, a flag _SD_i[Port]_ was implemented in the main algorithm, in case of a detected sensor it is set to a certain value:
-* 1 - O<sub>2</sub>;
-* 2 - Temp;
-* 3 - CO<sub>2</sub>.
-
+The device had no intention for high-speed microSD data writing, accordingly, SPI interface was implemented both from HW and SW side. To integrate this storage peripheral with a STM32 system, _FATFS_ Middleware was configured in STM32CubeMX and this [tutorial](https://controllerstech.com/sd-card-using-spi-in-stm32/) was followed specifically for SPI interface realization. The library provides the ability to operate in append mode, so _.txt_ files can be created on an empty microSD card only once and will be appended each time logging is present. In order to prevent blank data logging into files or a mismatch, a flag _SD_i[Port]_ was implemented in the main algorithm, in case of a detected sensor it is set to a certain value:
+* SD_i[Port] == 1 - O<sub>2</sub>;
+* SD_i[Port] == 2 - Temp;
+* SD_i[Port] == 3 - CO<sub>2</sub>.
+* 
+If a I<sup>2</sup>C timeout is triggered, this flag is set to 0 by the respective channel. These values are checked in the separate timer callback function by quickly cycling through all of the channels and in case the statement is met, a corresponding file is opened and a buffer with sensor data and RTC time stamp is written into it. Screenshot below shows the result of data logging functionality:
 
 ![image](https://github.com/user-attachments/assets/7c7547f9-2da8-4a97-ab0e-dae25e2dd4ec)
 
