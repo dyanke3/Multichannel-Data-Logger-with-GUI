@@ -34,8 +34,8 @@ The device had no intention for high-speed microSD data writing, accordingly, SP
 * SD_i[Port] == 1 - O<sub>2</sub>;
 * SD_i[Port] == 2 - Temp;
 * SD_i[Port] == 3 - CO<sub>2</sub>.
-* 
-If a I<sup>2</sup>C timeout is triggered, this flag is set to 0 by the respective channel. These values are checked in the separate timer callback function by quickly cycling through all of the channels and in case the statement is met, a corresponding file is opened and a buffer with sensor data and RTC time stamp is written into it. Screenshot below shows the result of data logging functionality:
+
+In case a I<sup>2</sup>C timeout is triggered, this flag is set to 0 to the respective channel. These values are checked in the separate timer callback function by quickly cycling through all of the channels and in case the statement is met, a corresponding file is opened and a buffer with sensor data and RTC time stamp is written into it. Screenshot below shows the result of data logging functionality:
 
 ![image](https://github.com/user-attachments/assets/7c7547f9-2da8-4a97-ab0e-dae25e2dd4ec)
 
