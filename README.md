@@ -26,7 +26,9 @@ Timer callback function is used for the main algorithm: it varies between I<sup>
 
 This project had no need for high-speed microSD data writing, accordingly, SPI interface was implemented both from HW and SW side. To integrate this storage peripheral with a STM32 system, _FATFS_ Middleware was configured in STM32CubeMX and this [tutorial](https://controllerstech.com/sd-card-using-spi-in-stm32/) was followed specifically for SPI interface realization. A separate Timer was used for periodic file appending and its interrupt period differs by modifying the prescaler values in real-time. These modifications are done corresponding to input from the user: checkboxes 
 
-![image](https://github.com/user-attachments/assets/98dd9f8b-04b2-4e13-803e-33ade3583bb7)
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/98dd9f8b-04b2-4e13-803e-33ade3583bb7" />
+</p>
 
 ![image](https://github.com/user-attachments/assets/7c7547f9-2da8-4a97-ab0e-dae25e2dd4ec)
 
